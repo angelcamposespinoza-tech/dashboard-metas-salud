@@ -2,21 +2,28 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+# Configuración de página y estilo
 st.set_page_config(page_title="Monitor Pro - Salud", layout="wide")
 st.title("📊 Monitor de Rendimiento Jerárquico")
 
 archivos = st.file_uploader("Subir Archivos de Dependencias", type=["xlsx"], accept_multiple_files=True)
 
 def procesar_fila(fila):
-    """Lógica para extraer logros y calcular porcentajes de una fila."""
+    """Extrae logros y metas de una fila de Excel (salta de 3 en 3 columnas)."""
     meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
     logros, metas = [], []
-    col_logro = 3
+    col_logro = 3 # Columna D en Excel
     for _ in meses:
-        val_meta = fila.iloc[col_logro - 1]
-        val_logro = fila.iloc[col_logro]
-        meta = float(val_meta) if pd.notna(val_meta) and str(val_meta).upper() != 'N/A' else 0
-        logro = float(val_logro) if pd.notna(val_logro) and str(val_logro).upper() != 'N/A' else 0
+        try:
+            val_meta = fila.iloc[col_logro - 1]
+            val_logro = fila.iloc[col_logro]
+            
+            # Conversión segura a número
+            meta = float(val_meta) if pd.notna(val_meta) and str(val_meta).upper() != 'N/A' else 0
+            logro = float(val_logro) if pd.notna(val_logro) and str(val_logro).upper() != 'N/A' else 0
+        except:
+            meta, logro = 0, 0
+            
         metas.append(meta)
         logros.append(logro)
         col_logro += 3
@@ -35,14 +42,16 @@ if archivos:
     opciones_hojas = ["Resultados Generales (Consolidado)"] + list(dict_hojas.keys())
     sede_sel = st.sidebar.selectbox("2. Seleccione Sede/Hoja:", opciones_hojas)
 
-    # --- CURACIÓN DINÁMICA DE INDICADORES ---
-    # Obtenemos servicios que no sean N/A y tengan datos reales
+    # --- CURACIÓN DINÁMICA DE INDICADORES (SOLUCIÓN AL ERROR ATTRIBUTEERROR) ---
     servicios_validos = set()
     for nombre_hoja, contenido in dict_hojas.items():
         df_temp = contenido.iloc[10:].copy()
-        # Filtramos filas donde la primera columna no sea nula o N/A
-        servicios = df_temp[df_temp.iloc[:, 0].notna() & (df_temp.iloc[:, 0].astype(str).upper() != 'N/A')].iloc[:, 0].unique()
-        servicios_validos.update(servicios)
+        if not df_temp.empty:
+            # Limpieza fila por fila para evitar errores de tipo de dato
+            for val in df_temp.iloc[:, 0].dropna().unique():
+                val_str = str(val).strip().upper()
+                if val_str not in ['N/A', 'NAN', '', 'NONE']:
+                    servicios_validos.add(val)
 
     indicador = st.selectbox("3. Seleccione el Servicio/Indicador:", sorted(list(servicios_validos)))
 
@@ -65,34 +74,39 @@ if archivos:
         if not fila.empty:
             metas_final, logros_final = procesar_fila(fila.iloc[0])
 
-    # Calcular porcentajes finales
+    # Calcular porcentajes finales con protección contra división por cero
     porcentajes_final = [round((l/m*100),1) if m > 0 else 0 for l, m in zip(logros_final, metas_final)]
 
-    # --- VISUALIZACIÓN TEMPORAL (KPIs) ---
+    # --- VISUALIZACIÓN DE DASHBOARD ---
     st.divider()
+    st.subheader(f"Resultados para: {indicador} ({sede_sel})")
     
-    # Gráfico Mensual
+    # Gráfico Mensual Principal
     df_plot = pd.DataFrame({'Mes': meses_nombres, 'Logro': logros_final, 'Pct': porcentajes_final})
     fig_mensual = px.bar(df_plot, x='Mes', y='Logro', text=[f"{p}%" for p in porcentajes_final],
-                         title=f"Avance Mensual: {indicador}", color='Logro', color_continuous_scale='Blues')
+                         title="Avance Mensual y % de Cumplimiento", 
+                         color='Logro', color_continuous_scale='Blues')
+    fig_mensual.update_traces(textposition='outside')
     st.plotly_chart(fig_mensual, use_container_width=True)
 
-    # 3. COMPARATIVO POR TRIMESTRE Y SEMESTRE
+    # --- KPIs TEMPORALES (TRIMESTRE Y SEMESTRE) ---
     col1, col2 = st.columns(2)
     
     with col1:
         # Trimestres
-        tri = ["T1", "T2", "T3", "T4"]
+        tri_labels = ["T1 (Ene-Mar)", "T2 (Abr-Jun)", "T3 (Jul-Sep)", "T4 (Oct-Dic)"]
         logros_tri = [sum(logros_final[0:3]), sum(logros_final[3:6]), sum(logros_final[6:9]), sum(logros_final[9:12])]
-        fig_tri = px.pie(names=tri, values=logros_tri, title="Distribución por Trimestre", hole=0.4)
+        fig_tri = px.pie(names=tri_labels, values=logros_tri, title="Distribución por Trimestre", hole=0.4)
         st.plotly_chart(fig_tri, use_container_width=True)
 
     with col2:
         # Semestres
-        sem = ["1er Semestre", "2do Semestre"]
+        sem_labels = ["1er Semestre", "2do Semestre"]
         logros_sem = [sum(logros_final[0:6]), sum(logros_final[6:12])]
-        fig_sem = px.bar(x=sem, y=logros_sem, title="Consolidado por Semestre", color=sem, text=logros_sem)
+        fig_sem = px.bar(x=sem_labels, y=logros_sem, title="Consolidado por Semestre", 
+                         color=sem_labels, text=logros_sem,
+                         labels={'x': 'Periodo', 'y': 'Total Logrado'})
         st.plotly_chart(fig_sem, use_container_width=True)
 
 else:
-    st.info("💡 Por favor, sube los archivos Excel para iniciar el análisis jerárquico.")
+    st.info("💡 Sube uno o varios archivos Excel para generar el reporte jerárquico.")
