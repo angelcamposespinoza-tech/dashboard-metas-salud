@@ -55,7 +55,6 @@ if archivos:
     opciones_hojas = ["CONSOLIDADO MUNICIPAL"] + list(dict_hojas.keys())
     sede_sel = st.sidebar.selectbox("Seleccione Unidad:", opciones_hojas)
 
-    # Identificar indicadores (desde fila 11, columna A)
     servicios = set()
     for h in dict_hojas.values():
         if h.shape[1] > 0:
@@ -66,7 +65,6 @@ if archivos:
 
     indicador = st.selectbox("Seleccione Indicador:", sorted(list(servicios)))
 
-    # --- PROCESAMIENTO ---
     nombres_periodos, logros_f, pcts_f = [], [0]*16, [0]*16
 
     if sede_sel == "CONSOLIDADO MUNICIPAL":
@@ -79,7 +77,6 @@ if archivos:
                     logros_f = [x + y for x, y in zip(logros_f, l)]
                     pcts_f = [x + y for x, y in zip(pcts_f, p)]
                     cont_hojas += 1
-        # Promediamos los porcentajes en el consolidado para mantener coherencia
         if cont_hojas > 0:
             pcts_f = [round(p / cont_hojas, 1) for p in pcts_f]
     else:
@@ -88,29 +85,28 @@ if archivos:
         if not fila.empty:
             nombres_periodos, logros_f, pcts_f = extraer_data_detallada(fila.iloc[0])
 
-    # --- VISUALIZACIÓN ---
     if nombres_periodos:
         df_total = pd.DataFrame({'Periodo': nombres_periodos, 'Logro': logros_f, 'Pct': pcts_f})
-        
-        # Separar Meses de Avances Trimestrales
         df_meses = df_total[~df_total['Periodo'].str.contains('Avance')]
         df_trim = df_total[df_total['Periodo'].str.contains('Avance')]
 
         st.divider()
         st.subheader(f"📌 Seguimiento: {indicador}")
         
-        # Gráfica de Meses con % del Excel
         fig_m = px.bar(df_meses, x='Periodo', y='Logro', text=[f"{p}%" for p in df_meses['Pct']],
                        color='Pct', color_continuous_scale='RdYlGn',
-                       title="Logros Mensuales (El % es tomado directamente de las columnas E, H, K...)")
+                       title="Logros Mensuales (Porcentaje real de columnas E, H, K...)")
         fig_m.update_traces(textposition='outside')
         st.plotly_chart(fig_m, use_container_width=True)
 
-        # Gráfica de Avances Trimestrales (Columnas de Avance)
         st.subheader("🏁 Avances de Trimestre (Celdas de Porcentaje Reales)")
         fig_t = px.bar(df_trim, x='Periodo', y='Pct', text=[f"{p}%" for p in df_trim['Pct']],
                        labels={'Pct': '% de Logro Real'}, color_discrete_sequence=['#1f77b4'])
-        fig_t.update_layout(yaxis_suffix="%", yaxis_title="Porcentaje de Logro")
+        
+        # Corrección del error de layout
+        fig_t.update_layout(yaxis_title="Porcentaje de Logro (%)")
+        fig_t.update_traces(textposition='outside')
+        
         st.plotly_chart(fig_t, use_container_width=True)
     else:
         st.warning("No se encontraron datos para mostrar.")
