@@ -9,10 +9,7 @@ archivos = st.file_uploader("Subir archivos Excel", type=["xlsx"], accept_multip
 
 def extraer_data_detallada(fila):
     """
-    Extrae Meta, Logro y % de las columnas exactas:
-    Enero: Meta(2), Logro(3), % (4)
-    Febrero: Meta(5), Logro(6), % (7)
-    ...etc.
+    Extrae Meta, Logro y % de las columnas exactas (E, H, K, N...).
     """
     indices_meta = [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41, 44, 47]
     indices_logro = [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48]
@@ -35,25 +32,36 @@ if archivos:
     nombres_archivos = [arc.name for arc in archivos]
     dep_sel = st.sidebar.selectbox("1. Seleccione Municipio:", nombres_archivos)
     archivo_obj = next(arc for arc in archivos if arc.name == dep_sel)
+    
+    # Leer el Excel completo
     dict_hojas = pd.read_excel(archivo_obj, sheet_name=None, header=None)
     
-    opciones_hojas = ["CONSOLIDADO MUNICIPAL (Suma de todas las sedes)"] + list(dict_hojas.keys())
-    sede_sel = st.sidebar.selectbox("2. Seleccione Unidad Médica:", opciones_hojas)
-
-    # Identificar servicios (Fila 11 en adelante, Columna A)
-    servicios = set()
+    # --- FILTRADO DE INDICADORES (ELIMINACIÓN DE N/A Y RUIDO) ---
+    servicios_limpios = set()
     for h in dict_hojas.values():
         if h.shape[1] > 0:
-            for s in h.iloc[10:, 0].dropna().unique():
-                if str(s).strip().upper() not in ['N/A', 'SERVICIOS DE SALUD', 'TRATO DIGNO', 'NAN']:
-                    servicios.add(str(s).strip())
+            # Revisamos desde la fila 11
+            df_temp = h.iloc[10:, 0].dropna()
+            for s in df_temp.unique():
+                nombre_s = str(s).strip()
+                # REGLA: No debe ser N/A, ni títulos generales, ni estar vacío
+                if nombre_s.upper() not in ['N/A', 'SERVICIOS DE SALUD', 'TRATO DIGNO', 'NAN', 'FORTALECIMIENTO A LA ATENCIÓN MÉDICA']:
+                    if len(nombre_s) > 5: # Filtra ruidos de celdas accidentales
+                        servicios_limpios.add(nombre_s)
+    
+    lista_ordenada = sorted(list(servicios_limpios))
 
-    indicador = st.selectbox("3. Seleccione el Indicador:", sorted(list(servicios)))
+    # 2. Selección de Unidad
+    opciones_hojas = ["CONSOLIDADO MUNICIPAL (Suma total)"] + list(dict_hojas.keys())
+    sede_sel = st.sidebar.selectbox("2. Seleccione Unidad Médica:", opciones_hojas)
+
+    # 3. Buscador de Indicador (st.selectbox ya permite escribir para buscar)
+    indicador = st.selectbox("3. Busque y Seleccione el Indicador:", lista_ordenada, help="Escriba el nombre del servicio para filtrar rápidamente.")
 
     # --- PROCESAMIENTO ---
     nombres_periodos, metas_f, logros_f, pcts_f = [], [0]*16, [0]*16, [0]*16
 
-    if sede_sel == "CONSOLIDADO MUNICIPAL (Suma de todas las sedes)":
+    if sede_sel == "CONSOLIDADO MUNICIPAL (Suma total)":
         for h in dict_hojas.values():
             if h.shape[1] > 0:
                 fila = h[h.iloc[:, 0].astype(str).str.strip() == indicador]
@@ -61,7 +69,6 @@ if archivos:
                     nombres_periodos, m, l, p = extraer_data_detallada(fila.iloc[0])
                     metas_f = [x + y for x, y in zip(metas_f, m)]
                     logros_f = [x + y for x, y in zip(logros_f, l)]
-        # En el consolidado, recalculamos el % real: (Suma Logros / Suma Metas)
         pcts_f = [round((l/m*100),1) if m > 0 else 0 for l, m in zip(logros_f, metas_f)]
     else:
         hoja = dict_hojas[sede_sel]
@@ -75,27 +82,26 @@ if archivos:
         df_trim = df_total[df_total['Periodo'].str.contains('Avance')]
 
         st.divider()
-        st.header(f"📍 {indicador} - {sede_sel}")
+        st.header(f"📍 {indicador}")
         
         # Gráfica de Meses
         fig_m = px.bar(df_meses, x='Periodo', y='Logro', text=[f"{p}%" for p in df_meses['Pct']],
                        color='Pct', color_continuous_scale='RdYlGn',
-                       title="CUMPLIMIENTO MENSUAL (Porcentaje directo de celdas E, H, K...)")
+                       title="Cumplimiento Mensual (Ene - Dic)")
         fig_m.update_traces(textposition='outside')
         st.plotly_chart(fig_m, use_container_width=True)
 
-        # Gráfica de Avances Trimestrales
-        st.subheader("🏁 Avance de Trimestres (Columnas de Avance del Excel)")
+        # Gráfica de Avances
+        st.subheader("🏁 Resumen de Avances Trimestrales")
         fig_t = px.bar(df_trim, x='Periodo', y='Pct', text=[f"{p}%" for p in df_trim['Pct']],
-                       labels={'Pct': '% de Logro'}, color_discrete_sequence=['#2E86C1'])
-        fig_t.update_layout(yaxis_title="Porcentaje de Logro (%)", yaxis_range=[0, max(df_trim['Pct'].max()+20, 120)])
+                       color_discrete_sequence=['#2E86C1'])
+        fig_t.update_layout(yaxis_title="Porcentaje (%)", yaxis_range=[0, max(df_trim['Pct'].max()+20, 120)])
         fig_t.update_traces(textposition='outside')
         st.plotly_chart(fig_t, use_container_width=True)
 
-        # Tabla de Verificación
-        with st.expander("🔍 Ver tabla de datos (Meta vs Logro)"):
+        with st.expander("🔍 Ver Tabla de Datos"):
             st.table(df_total.set_index('Periodo'))
     else:
-        st.error("No se encontraron datos. Verifica que el indicador exista en esa unidad.")
+        st.warning("No hay datos disponibles para este indicador en la unidad seleccionada.")
 else:
-    st.info("Sube tus archivos para comenzar.")
+    st.info("Sube los archivos Excel para activar el buscador y los filtros.")
