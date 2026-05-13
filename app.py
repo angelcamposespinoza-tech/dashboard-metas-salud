@@ -29,15 +29,19 @@ def extraer_data_detallada(fila):
     return nombres, ms, ls, ps
 
 if archivos:
-    # --- AUDITORÍA DE CARGA ANUAL (HASTA DICIEMBRE) ---
+    # --- AUDITORÍA DE CARGA CON FILTRO POR MES ---
     st.sidebar.divider()
-    if st.sidebar.button("🔍 Auditar Carga de Datos (Anual)"):
-        st.header("⚠️ Reporte de Omisiones: Enero a Diciembre")
-        st.write("Detección de unidades con metas programadas pero sin reporte de logro.")
+    st.sidebar.subheader("⚙️ Configuración de Auditoría")
+    
+    # Selector de mes para la auditoría
+    opciones_mes = ["Todos los meses", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+    mes_filtro = st.sidebar.selectbox("Filtrar omisiones por:", opciones_mes)
+
+    if st.sidebar.button("🔍 Auditar Carga de Datos"):
+        st.header(f"⚠️ Reporte de Omisiones: {mes_filtro}")
         
         reporte_omisiones = []
-        # Mapeo de columnas de LOGRO para los 12 meses
-        # Basado en la estructura: Ene=3, Feb=6, Mar=9, Abr=15, May=18, Jun=21, Jul=27, Ago=30, Sep=33, Oct=39, Nov=42, Dic=45
+        # Mapeo de columnas de LOGRO
         meses_columnas = {
             3: 'Ene', 6: 'Feb', 9: 'Mar', 
             15: 'Abr', 18: 'May', 21: 'Jun', 
@@ -48,39 +52,45 @@ if archivos:
         for arc in archivos:
             dict_temp = pd.read_excel(arc, sheet_name=None, header=None)
             for nombre_hoja, df_hoja in dict_temp.items():
-                if df_hoja.shape[1] >= 46: # Asegurar que tiene columnas hasta diciembre
+                if df_hoja.shape[1] >= 46:
                     datos_reales = df_hoja.iloc[10:].dropna(subset=[0])
                     for _, fila in datos_reales.iterrows():
                         indicador_nombre = str(fila.iloc[0]).strip()
+                        
                         if len(indicador_nombre) > 5 and indicador_nombre.upper() not in ['N/A', 'NAN', 'SERVICIOS DE SALUD']:
                             for col_logro, mes_nom in meses_columnas.items():
+                                # Si el filtro es un mes específico, saltamos los demás
+                                if mes_filtro != "Todos los meses" and mes_nom != mes_filtro:
+                                    continue
+                                    
                                 col_meta = col_logro - 1
                                 try:
                                     meta_val = float(fila.iloc[col_meta]) if pd.notna(fila.iloc[col_meta]) else 0
                                     logro_val = float(fila.iloc[col_logro]) if pd.notna(fila.iloc[col_logro]) else 0
                                     
+                                    # Criterio: Hay meta pero no hay logro (0 o vacío)
                                     if meta_val > 0 and (logro_val == 0 or pd.isna(logro_val)):
                                         reporte_omisiones.append({
                                             "Municipio": arc.name.replace(".xlsx", ""),
                                             "Unidad/Pestaña": nombre_hoja,
                                             "Indicador": indicador_nombre,
-                                            "Mes Faltante": mes_nom
+                                            "Mes": mes_nom
                                         })
                                 except:
                                     continue
         
         if reporte_omisiones:
             df_omisiones = pd.DataFrame(reporte_omisiones)
-            st.warning(f"Se encontraron {len(df_omisiones)} registros pendientes de llenar.")
+            st.warning(f"Se encontraron {len(df_omisiones)} registros pendientes.")
             st.dataframe(df_omisiones, use_container_width=True)
             
-            # Botón para descargar el reporte de errores
             csv = df_omisiones.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Descargar Reporte de Omisiones (CSV)", csv, "omisiones_anuales.csv", "text/csv")
+            st.download_button("📥 Descargar Reporte (CSV)", csv, f"omisiones_{mes_filtro}.csv", "text/csv")
         else:
-            st.success("✅ Carga completa: No se detectaron omisiones de Enero a Diciembre.")
+            st.success(f"✅ Sin omisiones detectadas para: {mes_filtro}")
 
-    # --- VISUALIZADOR POR MUNICIPIO ---
+    # --- VISUALIZADOR INDIVIDUAL (Original) ---
+    st.sidebar.divider()
     nombres_archivos = [arc.name for arc in archivos]
     dep_sel = st.sidebar.selectbox("1. Seleccione Municipio:", nombres_archivos)
     archivo_obj = next(arc for arc in archivos if arc.name == dep_sel)
@@ -102,7 +112,6 @@ if archivos:
     sede_sel = st.sidebar.selectbox("2. Seleccione Unidad Médica:", opciones_hojas)
     indicador = st.selectbox("3. Seleccione el Indicador:", lista_ordenada)
 
-    # --- CÁLCULOS ---
     if sede_sel == "CONSOLIDADO MUNICIPAL":
         metas_f, logros_f = [0]*16, [0]*16
         nombres_periodos = []
@@ -129,15 +138,12 @@ if archivos:
         st.divider()
         st.header(f"📍 {indicador}")
         
-        # Gráfica de Barras Anual
         fig_anual = px.bar(df_meses, x='Periodo', y=['Meta', 'Logro'], barmode='group',
-                           title="Comparativa Anual Meta vs Logro (Ene - Dic)",
+                           title=f"Cumplimiento Anual: {indicador}",
                            color_discrete_map={'Meta': '#1f77b4', 'Logro': '#d62728'})
         st.plotly_chart(fig_anual, use_container_width=True)
 
         with st.expander("🔍 Ver Tabla Detallada"):
             st.table(df_total.set_index('Periodo'))
-    else:
-        st.warning("Indicador no encontrado en esta unidad.")
 else:
-    st.info("Sube los archivos Excel para iniciar el análisis anual.")
+    st.info("Sube los archivos Excel para activar las herramientas de auditoría.")
