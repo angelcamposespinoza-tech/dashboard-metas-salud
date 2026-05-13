@@ -29,36 +29,68 @@ def extraer_data_detallada(fila):
     return nombres, ms, ls, ps
 
 if archivos:
+    # --- NUEVA FUNCIÓN: AUDITORÍA DE CARGA ---
+    st.sidebar.divider()
+    if st.sidebar.button("🔍 Auditar Carga de Datos"):
+        st.header("⚠️ Reporte de Omisiones (Falta de Carga)")
+        st.write("Unidades que tienen Meta programada pero Logro en 0 o vacío.")
+        
+        reporte_omisiones = []
+        meses_columnas = {3: 'Ene', 6: 'Feb', 9: 'Mar', 15: 'Abr', 18: 'May', 21: 'Jun'} # Columnas de Logro
+
+        for arc in archivos:
+            dict_temp = pd.read_excel(arc, sheet_name=None, header=None)
+            for nombre_hoja, df_hoja in dict_temp.items():
+                if df_hoja.shape[1] > 10:
+                    # Analizamos desde la fila 11
+                    datos_reales = df_hoja.iloc[10:].dropna(subset=[0])
+                    for _, fila in datos_reales.iterrows():
+                        indicador_nombre = str(fila.iloc[0]).strip()
+                        # Solo auditar indicadores válidos
+                        if len(indicador_nombre) > 5 and indicador_nombre.upper() not in ['N/A', 'NAN']:
+                            # Revisar cada mes (Meta > 0 y Logro == 0)
+                            for col_logro, mes_nom in meses_columnas.items():
+                                col_meta = col_logro - 1
+                                meta_val = fila.iloc[col_meta] if pd.notna(fila.iloc[col_meta]) else 0
+                                logro_val = fila.iloc[col_logro] if pd.notna(fila.iloc[col_logro]) else 0
+                                
+                                if meta_val > 0 and (logro_val == 0 or pd.isna(logro_val)):
+                                    reporte_omisiones.append({
+                                        "Municipio": arc.name.replace(".xlsx", ""),
+                                        "Jurisdicción/Unidad": nombre_hoja,
+                                        "Indicador": indicador_nombre,
+                                        "Mes Faltante": mes_nom
+                                    })
+        
+        if reporte_omisiones:
+            df_omisiones = pd.DataFrame(reporte_omisiones)
+            st.warning(f"Se encontraron {len(df_omisiones)} rubros sin información de logro.")
+            st.dataframe(df_omisiones, use_container_width=True)
+        else:
+            st.success("✅ ¡Felicidades! Todos los rubros con metas tienen logros cargados.")
+    
+    # --- LÓGICA ORIGINAL DE LA APP ---
     nombres_archivos = [arc.name for arc in archivos]
     dep_sel = st.sidebar.selectbox("1. Seleccione Municipio:", nombres_archivos)
     archivo_obj = next(arc for arc in archivos if arc.name == dep_sel)
     
-    # Leer el Excel completo
     dict_hojas = pd.read_excel(archivo_obj, sheet_name=None, header=None)
     
-    # --- FILTRADO DE INDICADORES (ELIMINACIÓN DE N/A Y RUIDO) ---
     servicios_limpios = set()
     for h in dict_hojas.values():
         if h.shape[1] > 0:
-            # Revisamos desde la fila 11
             df_temp = h.iloc[10:, 0].dropna()
             for s in df_temp.unique():
                 nombre_s = str(s).strip()
-                # REGLA: No debe ser N/A, ni títulos generales, ni estar vacío
                 if nombre_s.upper() not in ['N/A', 'SERVICIOS DE SALUD', 'TRATO DIGNO', 'NAN', 'FORTALECIMIENTO A LA ATENCIÓN MÉDICA']:
-                    if len(nombre_s) > 5: # Filtra ruidos de celdas accidentales
+                    if len(nombre_s) > 5:
                         servicios_limpios.add(nombre_s)
     
     lista_ordenada = sorted(list(servicios_limpios))
-
-    # 2. Selección de Unidad
     opciones_hojas = ["CONSOLIDADO MUNICIPAL (Suma total)"] + list(dict_hojas.keys())
     sede_sel = st.sidebar.selectbox("2. Seleccione Unidad Médica:", opciones_hojas)
+    indicador = st.selectbox("3. Busque y Seleccione el Indicador:", lista_ordenada)
 
-    # 3. Buscador de Indicador (st.selectbox ya permite escribir para buscar)
-    indicador = st.selectbox("3. Busque y Seleccione el Indicador:", lista_ordenada, help="Escriba el nombre del servicio para filtrar rápidamente.")
-
-    # --- PROCESAMIENTO ---
     nombres_periodos, metas_f, logros_f, pcts_f = [], [0]*16, [0]*16, [0]*16
 
     if sede_sel == "CONSOLIDADO MUNICIPAL (Suma total)":
@@ -84,14 +116,12 @@ if archivos:
         st.divider()
         st.header(f"📍 {indicador}")
         
-        # Gráfica de Meses
         fig_m = px.bar(df_meses, x='Periodo', y='Logro', text=[f"{p}%" for p in df_meses['Pct']],
                        color='Pct', color_continuous_scale='RdYlGn',
                        title="Cumplimiento Mensual (Ene - Dic)")
         fig_m.update_traces(textposition='outside')
         st.plotly_chart(fig_m, use_container_width=True)
 
-        # Gráfica de Avances
         st.subheader("🏁 Resumen de Avances Trimestrales")
         fig_t = px.bar(df_trim, x='Periodo', y='Pct', text=[f"{p}%" for p in df_trim['Pct']],
                        color_discrete_sequence=['#2E86C1'])
@@ -102,6 +132,6 @@ if archivos:
         with st.expander("🔍 Ver Tabla de Datos"):
             st.table(df_total.set_index('Periodo'))
     else:
-        st.warning("No hay datos disponibles para este indicador en la unidad seleccionada.")
+        st.warning("No hay datos disponibles.")
 else:
-    st.info("Sube los archivos Excel para activar el buscador y los filtros.")
+    st.info("Sube los archivos Excel para activar el monitor.")
