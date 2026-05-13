@@ -31,7 +31,7 @@ def extraer_data_detallada(fila):
 if archivos:
     # --- NUEVA FUNCIÓN: AUDITORÍA DE CARGA ---
     st.sidebar.divider()
-    if st.sidebar.button("🔍 Auditar Carga de Datos"):
+    if st.sidebar.button("🔍 Mostrar rubros sin logros cargados"):
         st.header("⚠️ Reporte de Omisiones (Falta de Carga)")
         st.write("Unidades que tienen Meta programada pero Logro en 0 o vacío.")
         
