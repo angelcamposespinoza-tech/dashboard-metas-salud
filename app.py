@@ -71,7 +71,7 @@ if archivos:
     
     # --- LÓGICA ORIGINAL DE LA APP ---
     nombres_archivos = [arc.name for arc in archivos]
-    dep_sel = st.sidebar.selectbox("1. Seleccione Municipio:", nombres_archivos)
+    dep_sel = st.sidebar.selectbox("1. Seleccione Archivo:", nombres_archivos)
     archivo_obj = next(arc for arc in archivos if arc.name == dep_sel)
     
     dict_hojas = pd.read_excel(archivo_obj, sheet_name=None, header=None)
