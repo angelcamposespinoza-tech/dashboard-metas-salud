@@ -9,7 +9,7 @@ archivos = st.file_uploader("Subir archivos Excel", type=["xlsx"], accept_multip
 
 def extraer_data_detallada(fila):
     """
-    Extrae Meta, Logro y % de las columnas exactas (E, H, K, N...).
+    Extrae Meta, Logro y % de las columnas exactas para los 12 meses + avances trimestrales.
     """
     indices_meta = [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41, 44, 47]
     indices_logro = [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48]
@@ -29,49 +29,60 @@ def extraer_data_detallada(fila):
     return nombres, ms, ls, ps
 
 if archivos:
-    # --- NUEVA FUNCIÓN: AUDITORÍA DE CARGA ---
+    # --- AUDITORÍA DE CARGA ANUAL (HASTA DICIEMBRE) ---
     st.sidebar.divider()
-    if st.sidebar.button("🔍 Mostrar rubros sin logros cargados"):
-        st.header("⚠️ Reporte de Omisiones (Falta de Carga)")
-        st.write("Unidades que tienen Meta programada pero Logro en 0 o vacío.")
+    if st.sidebar.button("🔍 Auditar Carga de Datos (Anual)"):
+        st.header("⚠️ Reporte de Omisiones: Enero a Diciembre")
+        st.write("Detección de unidades con metas programadas pero sin reporte de logro.")
         
         reporte_omisiones = []
-        meses_columnas = {3: 'Ene', 6: 'Feb', 9: 'Mar', 15: 'Abr', 18: 'May', 21: 'Jun'} # Columnas de Logro
+        # Mapeo de columnas de LOGRO para los 12 meses
+        # Basado en la estructura: Ene=3, Feb=6, Mar=9, Abr=15, May=18, Jun=21, Jul=27, Ago=30, Sep=33, Oct=39, Nov=42, Dic=45
+        meses_columnas = {
+            3: 'Ene', 6: 'Feb', 9: 'Mar', 
+            15: 'Abr', 18: 'May', 21: 'Jun', 
+            27: 'Jul', 30: 'Ago', 33: 'Sep', 
+            39: 'Oct', 42: 'Nov', 45: 'Dic'
+        }
 
         for arc in archivos:
             dict_temp = pd.read_excel(arc, sheet_name=None, header=None)
             for nombre_hoja, df_hoja in dict_temp.items():
-                if df_hoja.shape[1] > 10:
-                    # Analizamos desde la fila 11
+                if df_hoja.shape[1] >= 46: # Asegurar que tiene columnas hasta diciembre
                     datos_reales = df_hoja.iloc[10:].dropna(subset=[0])
                     for _, fila in datos_reales.iterrows():
                         indicador_nombre = str(fila.iloc[0]).strip()
-                        # Solo auditar indicadores válidos
-                        if len(indicador_nombre) > 5 and indicador_nombre.upper() not in ['N/A', 'NAN']:
-                            # Revisar cada mes (Meta > 0 y Logro == 0)
+                        if len(indicador_nombre) > 5 and indicador_nombre.upper() not in ['N/A', 'NAN', 'SERVICIOS DE SALUD']:
                             for col_logro, mes_nom in meses_columnas.items():
                                 col_meta = col_logro - 1
-                                meta_val = fila.iloc[col_meta] if pd.notna(fila.iloc[col_meta]) else 0
-                                logro_val = fila.iloc[col_logro] if pd.notna(fila.iloc[col_logro]) else 0
-                                
-                                if meta_val > 0 and (logro_val == 0 or pd.isna(logro_val)):
-                                    reporte_omisiones.append({
-                                        "Municipio": arc.name.replace(".xlsx", ""),
-                                        "Jurisdicción/Unidad": nombre_hoja,
-                                        "Indicador": indicador_nombre,
-                                        "Mes Faltante": mes_nom
-                                    })
+                                try:
+                                    meta_val = float(fila.iloc[col_meta]) if pd.notna(fila.iloc[col_meta]) else 0
+                                    logro_val = float(fila.iloc[col_logro]) if pd.notna(fila.iloc[col_logro]) else 0
+                                    
+                                    if meta_val > 0 and (logro_val == 0 or pd.isna(logro_val)):
+                                        reporte_omisiones.append({
+                                            "Municipio": arc.name.replace(".xlsx", ""),
+                                            "Unidad/Pestaña": nombre_hoja,
+                                            "Indicador": indicador_nombre,
+                                            "Mes Faltante": mes_nom
+                                        })
+                                except:
+                                    continue
         
         if reporte_omisiones:
             df_omisiones = pd.DataFrame(reporte_omisiones)
-            st.warning(f"Se encontraron {len(df_omisiones)} rubros sin información de logro.")
+            st.warning(f"Se encontraron {len(df_omisiones)} registros pendientes de llenar.")
             st.dataframe(df_omisiones, use_container_width=True)
+            
+            # Botón para descargar el reporte de errores
+            csv = df_omisiones.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 Descargar Reporte de Omisiones (CSV)", csv, "omisiones_anuales.csv", "text/csv")
         else:
-            st.success("✅ ¡Felicidades! Todos los rubros con metas tienen logros cargados.")
-    
-    # --- LÓGICA ORIGINAL DE LA APP ---
+            st.success("✅ Carga completa: No se detectaron omisiones de Enero a Diciembre.")
+
+    # --- VISUALIZADOR POR MUNICIPIO ---
     nombres_archivos = [arc.name for arc in archivos]
-    dep_sel = st.sidebar.selectbox("1. Seleccione Archivo:", nombres_archivos)
+    dep_sel = st.sidebar.selectbox("1. Seleccione Municipio:", nombres_archivos)
     archivo_obj = next(arc for arc in archivos if arc.name == dep_sel)
     
     dict_hojas = pd.read_excel(archivo_obj, sheet_name=None, header=None)
@@ -82,18 +93,19 @@ if archivos:
             df_temp = h.iloc[10:, 0].dropna()
             for s in df_temp.unique():
                 nombre_s = str(s).strip()
-                if nombre_s.upper() not in ['N/A', 'SERVICIOS DE SALUD', 'TRATO DIGNO', 'NAN', 'FORTALECIMIENTO A LA ATENCIÓN MÉDICA']:
+                if nombre_s.upper() not in ['N/A', 'SERVICIOS DE SALUD', 'TRATO DIGNO', 'NAN']:
                     if len(nombre_s) > 5:
                         servicios_limpios.add(nombre_s)
     
     lista_ordenada = sorted(list(servicios_limpios))
-    opciones_hojas = ["CONSOLIDADO MUNICIPAL (Suma total)"] + list(dict_hojas.keys())
+    opciones_hojas = ["CONSOLIDADO MUNICIPAL"] + list(dict_hojas.keys())
     sede_sel = st.sidebar.selectbox("2. Seleccione Unidad Médica:", opciones_hojas)
-    indicador = st.selectbox("3. Busque y Seleccione el Indicador:", lista_ordenada)
+    indicador = st.selectbox("3. Seleccione el Indicador:", lista_ordenada)
 
-    nombres_periodos, metas_f, logros_f, pcts_f = [], [0]*16, [0]*16, [0]*16
-
-    if sede_sel == "CONSOLIDADO MUNICIPAL (Suma total)":
+    # --- CÁLCULOS ---
+    if sede_sel == "CONSOLIDADO MUNICIPAL":
+        metas_f, logros_f = [0]*16, [0]*16
+        nombres_periodos = []
         for h in dict_hojas.values():
             if h.shape[1] > 0:
                 fila = h[h.iloc[:, 0].astype(str).str.strip() == indicador]
@@ -107,31 +119,25 @@ if archivos:
         fila = hoja[hoja.iloc[:, 0].astype(str).str.strip() == indicador]
         if not fila.empty:
             nombres_periodos, metas_f, logros_f, pcts_f = extraer_data_detallada(fila.iloc[0])
+        else:
+            nombres_periodos = []
 
     if nombres_periodos:
         df_total = pd.DataFrame({'Periodo': nombres_periodos, 'Meta': metas_f, 'Logro': logros_f, 'Pct': pcts_f})
         df_meses = df_total[~df_total['Periodo'].str.contains('Avance')]
-        df_trim = df_total[df_total['Periodo'].str.contains('Avance')]
-
+        
         st.divider()
         st.header(f"📍 {indicador}")
         
-        fig_m = px.bar(df_meses, x='Periodo', y='Logro', text=[f"{p}%" for p in df_meses['Pct']],
-                       color='Pct', color_continuous_scale='RdYlGn',
-                       title="Cumplimiento Mensual (Ene - Dic)")
-        fig_m.update_traces(textposition='outside')
-        st.plotly_chart(fig_m, use_container_width=True)
+        # Gráfica de Barras Anual
+        fig_anual = px.bar(df_meses, x='Periodo', y=['Meta', 'Logro'], barmode='group',
+                           title="Comparativa Anual Meta vs Logro (Ene - Dic)",
+                           color_discrete_map={'Meta': '#1f77b4', 'Logro': '#d62728'})
+        st.plotly_chart(fig_anual, use_container_width=True)
 
-        st.subheader("🏁 Resumen de Avances Trimestrales")
-        fig_t = px.bar(df_trim, x='Periodo', y='Pct', text=[f"{p}%" for p in df_trim['Pct']],
-                       color_discrete_sequence=['#2E86C1'])
-        fig_t.update_layout(yaxis_title="Porcentaje (%)", yaxis_range=[0, max(df_trim['Pct'].max()+20, 120)])
-        fig_t.update_traces(textposition='outside')
-        st.plotly_chart(fig_t, use_container_width=True)
-
-        with st.expander("🔍 Ver Tabla de Datos"):
+        with st.expander("🔍 Ver Tabla Detallada"):
             st.table(df_total.set_index('Periodo'))
     else:
-        st.warning("No hay datos disponibles.")
+        st.warning("Indicador no encontrado en esta unidad.")
 else:
-    st.info("Sube los archivos Excel para activar el monitor.")
+    st.info("Sube los archivos Excel para iniciar el análisis anual.")
