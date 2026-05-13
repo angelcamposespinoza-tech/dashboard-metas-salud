@@ -37,7 +37,7 @@ if archivos:
     opciones_mes = ["Todos los meses", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
     mes_filtro = st.sidebar.selectbox("Filtrar omisiones por:", opciones_mes)
 
-    if st.sidebar.button("🔍 Auditar Carga de Datos"):
+    if st.sidebar.button("🔍 Mostrar rubros de logro no registrados"):
         st.header(f"⚠️ Reporte de Omisiones: {mes_filtro}")
         
         reporte_omisiones = []
