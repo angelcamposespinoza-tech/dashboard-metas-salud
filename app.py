@@ -29,16 +29,22 @@ def extraer_data_detallada(fila):
     return nombres, ms, ls, ps
 
 if archivos:
-    # --- AUDITORÍA DE CARGA CON FILTRO POR MES ---
+    # --- AUDITORÍA DE CARGA CON FILTRO POR MES Y TRIMESTRE ---
     st.sidebar.divider()
     st.sidebar.subheader("⚙️ Configuración de Auditoría")
     
-    # Selector de mes para la auditoría
-    opciones_mes = ["Todos los meses", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
-    mes_filtro = st.sidebar.selectbox("Filtrar omisiones por:", opciones_mes)
+    # Selector de periodo para la auditoría
+    opciones_periodo = [
+        "Todos los meses", 
+        "Trimestre 1 (Ene-Mar)", "Trimestre 2 (Abr-Jun)", 
+        "Trimestre 3 (Jul-Sep)", "Trimestre 4 (Oct-Dic)",
+        "Ene", "Feb", "Mar", "Abr", "May", "Jun", 
+        "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"
+    ]
+    periodo_filtro = st.sidebar.selectbox("Filtrar omisiones por periodo:", opciones_periodo)
 
     if st.sidebar.button("🔍 Mostrar rubros de logro no registrados"):
-        st.header(f"⚠️ Reporte de Omisiones: {mes_filtro}")
+        st.header(f"⚠️ Reporte de Omisiones: {periodo_filtro}")
         
         reporte_omisiones = []
         # Mapeo de columnas de LOGRO
@@ -48,6 +54,21 @@ if archivos:
             27: 'Jul', 30: 'Ago', 33: 'Sep', 
             39: 'Oct', 42: 'Nov', 45: 'Dic'
         }
+
+        # Definir meses a validar según el filtro
+        meses_validar = []
+        if periodo_filtro == "Todos los meses":
+            meses_validar = list(meses_columnas.values())
+        elif "Trimestre 1" in periodo_filtro:
+            meses_validar = ["Ene", "Feb", "Mar"]
+        elif "Trimestre 2" in periodo_filtro:
+            meses_validar = ["Abr", "May", "Jun"]
+        elif "Trimestre 3" in periodo_filtro:
+            meses_validar = ["Jul", "Ago", "Sep"]
+        elif "Trimestre 4" in periodo_filtro:
+            meses_validar = ["Oct", "Nov", "Dic"]
+        else:
+            meses_validar = [periodo_filtro]
 
         for arc in archivos:
             dict_temp = pd.read_excel(arc, sheet_name=None, header=None)
@@ -59,8 +80,8 @@ if archivos:
                         
                         if len(indicador_nombre) > 5 and indicador_nombre.upper() not in ['N/A', 'NAN', 'SERVICIOS DE SALUD']:
                             for col_logro, mes_nom in meses_columnas.items():
-                                # Si el filtro es un mes específico, saltamos los demás
-                                if mes_filtro != "Todos los meses" and mes_nom != mes_filtro:
+                                # Validar solo si el mes está en la selección del usuario
+                                if mes_nom not in meses_validar:
                                     continue
                                     
                                 col_meta = col_logro - 1
@@ -74,22 +95,22 @@ if archivos:
                                             "Municipio": arc.name.replace(".xlsx", ""),
                                             "Unidad/Pestaña": nombre_hoja,
                                             "Indicador": indicador_nombre,
-                                            "Mes": mes_nom
+                                            "Mes Pendiente": mes_nom
                                         })
                                 except:
                                     continue
         
         if reporte_omisiones:
             df_omisiones = pd.DataFrame(reporte_omisiones)
-            st.warning(f"Se encontraron {len(df_omisiones)} registros pendientes.")
+            st.warning(f"Se encontraron {len(df_omisiones)} registros pendientes en el periodo seleccionado.")
             st.dataframe(df_omisiones, use_container_width=True)
             
             csv = df_omisiones.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Descargar Reporte (CSV)", csv, f"omisiones_{mes_filtro}.csv", "text/csv")
+            st.download_button("📥 Descargar Reporte (CSV)", csv, f"omisiones_{periodo_filtro.replace(' ', '_')}.csv", "text/csv")
         else:
-            st.success(f"✅ Sin omisiones detectadas para: {mes_filtro}")
+            st.success(f"✅ Sin omisiones detectadas para: {periodo_filtro}")
 
-    # --- VISUALIZADOR INDIVIDUAL (Original) ---
+    # --- VISUALIZADOR INDIVIDUAL ---
     st.sidebar.divider()
     nombres_archivos = [arc.name for arc in archivos]
     dep_sel = st.sidebar.selectbox("1. Seleccione Municipio:", nombres_archivos)
