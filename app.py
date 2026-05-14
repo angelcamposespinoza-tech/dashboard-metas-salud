@@ -1,19 +1,18 @@
-# --- 1. INSTALACIÓN DE LIBRERÍAS (INCLUYENDO XLSXWRITER) ---
-!pip install streamlit pandas openpyxl plotly pyngrok xlsxwriter --quiet
-
-# --- 2. CONFIGURACIÓN DE NGROK (PON TU TOKEN AQUÍ) ---
 from pyngrok import ngrok
 import os
-# Reemplaza con tu token real de ngrok
+
+# --- CONFIGURACIÓN DE NGROK ---
+# Reemplaza con tu token real de https://dashboard.ngrok.com/get-started/your-authtoken
 token = "TU_TOKEN_AQUÍ" 
 ngrok.set_auth_token(token)
 
-# --- 3. CREACIÓN DE LA APP ---
+# --- ESCRITURA DEL ARCHIVO APP.PY ---
 %%writefile app.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from io import BytesIO
+from fpdf import FPDF
 
 st.set_page_config(page_title="Monitor de Metas Jurisdiccional", layout="wide")
 st.title("📊 Monitor de Metas Jurisdicción nº1")
@@ -21,158 +20,151 @@ st.title("📊 Monitor de Metas Jurisdicción nº1")
 archivos = st.file_uploader("Subir archivos Excel", type=["xlsx"], accept_multiple_files=True)
 
 def extraer_data_detallada(fila):
-    """Extrae Meta, Logro y % para los 12 meses + avances trimestrales."""
     indices_meta = [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41, 44, 47]
     indices_logro = [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48]
-    indices_pct = [4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 37, 40, 43, 46, 49]
     nombres = ['Ene', 'Feb', 'Mar', 'Avance T1', 'Abr', 'May', 'Jun', 'Avance T2', 
                'Jul', 'Ago', 'Sep', 'Avance T3', 'Oct', 'Nov', 'Dic', 'Avance T4']
-    
-    ms, ls, ps = [], [], []
-    for i in range(len(indices_pct)):
+    ms, ls = [], []
+    for i in range(len(indices_meta)):
         try:
             m = float(fila.iloc[indices_meta[i]]) if pd.notna(fila.iloc[indices_meta[i]]) else 0
             l = float(fila.iloc[indices_logro[i]]) if pd.notna(fila.iloc[indices_logro[i]]) else 0
-            p = float(fila.iloc[indices_pct[i]]) if pd.notna(fila.iloc[indices_pct[i]]) else 0
-            ms.append(m); ls.append(l); ps.append(round(p * 100, 1))
+            ms.append(m); ls.append(l)
         except:
-            ms.append(0); ls.append(0); ps.append(0)
-    return nombres, ms, ls, ps
+            ms.append(0); ls.append(0)
+    return nombres, ms, ls
+
+def generar_pdf(df_unidades, periodo_txt):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    # Título con el periodo
+    pdf.cell(200, 10, txt=f"REPORTE DE UNIDADES PENDIENTES", ln=True, align='C')
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(200, 10, txt=f"PERIODO: {periodo_txt.upper()}", ln=True, align='C')
+    pdf.ln(10)
+    
+    # Encabezados de tabla
+    pdf.set_font("Arial", "B", 12)
+    pdf.set_fill_color(200, 220, 255)
+    pdf.cell(80, 10, "MUNICIPIO", 1, 0, 'C', True)
+    pdf.cell(110, 10, "UNIDAD MEDICA", 1, 1, 'C', True)
+    
+    # Filas
+    pdf.set_font("Arial", "", 10)
+    for _, row in df_unidades.iterrows():
+        pdf.cell(80, 10, str(row['MUNICIPIO']), 1)
+        pdf.cell(110, 10, str(row['UNIDAD_MEDICA']), 1)
+        pdf.ln()
+    
+    # Codificar a latin-1 para evitar errores de caracteres especiales en FPDF estándar
+    return pdf.output(dest='S').encode('latin-1', 'replace')
 
 if archivos:
-    # --- AUDITORÍA CON MULTISELECCIÓN INTELIGENTE ---
-    st.sidebar.divider()
     st.sidebar.subheader("⚙️ Auditoría de Carga")
+    opciones_base = ["Todos los meses", "Trimestre 1", "Trimestre 2", "Trimestre 3", "Trimestre 4",
+                     "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
     
-    trimestres = {
-        "Trimestre 1 (Ene-Mar)": ["Ene", "Feb", "Mar"],
-        "Trimestre 2 (Abr-Jun)": ["Abr", "May", "Jun"],
-        "Trimestre 3 (Jul-Sep)": ["Jul", "Ago", "Sep"],
-        "Trimestre 4 (Oct-Dic)": ["Oct", "Nov", "Dic"]
-    }
-    
-    opciones_base = ["Todos los meses", "Trimestre 1 (Ene-Mar)", "Trimestre 2 (Abr-Jun)", 
-                     "Trimestre 3 (Jul-Sep)", "Trimestre 4 (Oct-Dic)", "Ene", "Feb", 
-                     "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
-    
-    if "periodo_sel" not in st.session_state:
-        st.session_state.periodo_sel = []
-
-    opciones_mostrar = opciones_base.copy()
-    if "Todos los meses" in st.session_state.periodo_sel:
-        opciones_mostrar = ["Todos los meses"]
-    else:
-        for trim, meses in trimestres.items():
-            if trim in st.session_state.periodo_sel:
-                for m in meses:
-                    if m in opciones_mostrar: opciones_mostrar.remove(m)
-            elif any(m in st.session_state.periodo_sel for m in meses):
-                if trim in opciones_mostrar: opciones_mostrar.remove(trim)
-                    
-    periodo_sel = st.sidebar.multiselect("Periodos a auditar:", opciones_mostrar, key="periodo_sel")
+    periodo_sel = st.sidebar.multiselect("Seleccione periodo(s) a auditar:", opciones_base)
 
     if st.sidebar.button("🔍 Generar Reporte de Omisiones"):
         if not periodo_sel:
-            st.error("Seleccione un periodo.")
+            st.error("Por favor, seleccione al menos un periodo.")
         else:
-            st.header(f"📋 Resumen de Unidades con Información Pendiente")
+            st.header(f"📋 Unidades con Información Pendiente")
             reporte_detallado = []
-            meses_columnas = {3: 'Ene', 6: 'Feb', 9: 'Mar', 15: 'Abr', 18: 'May', 21: 'Jun', 
-                              27: 'Jul', 30: 'Ago', 33: 'Sep', 39: 'Oct', 42: 'Nov', 45: 'Dic'}
-
+            meses_map = {3:'Ene', 6:'Feb', 9:'Mar', 15:'Abr', 18:'May', 21:'Jun', 27:'Jul', 30:'Ago', 33:'Sep', 39:'Oct', 42:'Nov', 45:'Dic'}
+            
+            # Resolver periodos seleccionados
             meses_validar = []
             if "Todos los meses" in periodo_sel:
-                meses_validar = list(meses_columnas.values())
+                meses_validar = list(meses_map.values())
             else:
+                trim_map = {"Trimestre 1":["Ene","Feb","Mar"], "Trimestre 2":["Abr","May","Jun"], "Trimestre 3":["Jul","Ago","Sep"], "Trimestre 4":["Oct","Nov","Dic"]}
                 for p in periodo_sel:
-                    if p in trimestres: meses_validar.extend(trimestres[p])
+                    if p in trim_map: meses_validar.extend(trim_map[p])
                     else: meses_validar.append(p)
-            
+
             for arc in archivos:
                 dict_temp = pd.read_excel(arc, sheet_name=None, header=None)
                 for nombre_hoja, df_hoja in dict_temp.items():
-                    if not df_hoja.empty and df_hoja.shape[1] >= 46:
-                        datos_reales = df_hoja.iloc[10:].dropna(subset=[0])
-                        for _, fila in datos_reales.iterrows():
-                            indicador_nombre = str(fila.iloc[0]).strip()
-                            if len(indicador_nombre) > 5 and indicador_nombre.upper() not in ['N/A', 'NAN', 'SERVICIOS DE SALUD']:
-                                for col_logro, mes_nom in meses_columnas.items():
-                                    if mes_nom in meses_validar:
-                                        col_meta = col_logro - 1
-                                        try:
-                                            m_v = float(fila.iloc[col_meta]) if pd.notna(fila.iloc[col_meta]) else 0
-                                            l_v = float(fila.iloc[col_logro]) if pd.notna(fila.iloc[col_logro]) else 0
-                                            if m_v > 0 and (l_v == 0 or pd.isna(l_v)):
-                                                reporte_detallado.append({
-                                                    "MUNICIPIO": arc.name.replace(".xlsx", "").upper(),
-                                                    "UNIDAD_MEDICA": nombre_hoja.upper(),
-                                                    "MES_FALTANTE": mes_nom.upper()
-                                                })
-                                        except: continue
+                    if df_hoja.shape[1] >= 46:
+                        # Analizar desde fila 11
+                        datos = df_hoja.iloc[10:].dropna(subset=[0])
+                        for _, fila in datos.iterrows():
+                            nombre_ind = str(fila.iloc[0]).strip()
+                            if len(nombre_ind) > 5 and "SERVICIOS" not in nombre_ind.upper():
+                                for col, mes in meses_map.items():
+                                    if mes in meses_validar:
+                                        meta = float(fila.iloc[col-1]) if pd.notna(fila.iloc[col-1]) else 0
+                                        logro = float(fila.iloc[col]) if pd.notna(fila.iloc[col]) else 0
+                                        if meta > 0 and (logro == 0 or pd.isna(logro)):
+                                            reporte_detallado.append({
+                                                "MUNICIPIO": arc.name.replace(".xlsx","").upper(),
+                                                "UNIDAD_MEDICA": nombre_hoja.upper()
+                                            })
 
             if reporte_detallado:
-                df_detallado = pd.DataFrame(reporte_detallado)
-                unidades_pendientes = df_detallado.drop_duplicates(subset=["MUNICIPIO", "UNIDAD_MEDICA"])
-                unidades_pendientes = unidades_pendientes[["MUNICIPIO", "UNIDAD_MEDICA"]].reset_index(drop=True)
+                df_det = pd.DataFrame(reporte_detallado).drop_duplicates().sort_values(by=["MUNICIPIO", "UNIDAD_MEDICA"])
+                st.warning(f"Se encontraron {len(df_det)} unidades con carga pendiente.")
+                st.table(df_det)
                 
-                st.warning(f"Se detectaron {len(unidades_pendientes)} unidades con carga pendiente.")
-                st.table(unidades_pendientes)
-
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    unidades_pendientes.to_excel(writer, index=False, sheet_name='Unidades_Pendientes')
-                    df_detallado.to_excel(writer, index=False, sheet_name='Detalle_por_Indicador')
+                # --- BOTONES DE DESCARGA ---
+                col1, col2 = st.columns(2)
                 
-                st.download_button(label="📥 Descargar Reporte (Excel)", data=output.getvalue(),
-                                   file_name="reporte_pendientes.xlsx",
-                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                # Excel
+                output_ex = BytesIO()
+                df_det.to_excel(output_ex, index=False, engine='xlsxwriter')
+                col1.download_button("📥 Descargar Reporte (Excel)", output_ex.getvalue(), "pendientes.xlsx")
+                
+                # PDF
+                periodo_str = ", ".join(periodo_sel)
+                pdf_bytes = generar_pdf(df_det, periodo_str)
+                col2.download_button("📥 Descargar Reporte (PDF)", pdf_bytes, "pendientes.pdf", "application/pdf")
             else:
-                st.success("✅ Carga completa detectada.")
+                st.success("✅ Carga completa detectada para los periodos seleccionados.")
 
     # --- VISUALIZADOR DE GRÁFICAS ---
     st.sidebar.divider()
-    if archivos:
-        dep_sel = st.sidebar.selectbox("1. Municipio para Gráficas:", [arc.name for arc in archivos])
-        archivo_obj = next(arc for arc in archivos if arc.name == dep_sel)
-        dict_hojas = pd.read_excel(archivo_obj, sheet_name=None, header=None)
-        
-        servicios = set()
-        for h in dict_hojas.values():
-            if not h.empty and h.shape[1] > 0:
-                for s in h.iloc[10:, 0].dropna().unique():
-                    if len(str(s)) > 5 and str(s).upper() not in ['N/A', 'SERVICIOS DE SALUD', 'NAN']:
-                        servicios.add(str(s).strip())
-        
-        if servicios:
-            indicador = st.selectbox("🎯 Buscar Indicador:", sorted(list(servicios)))
-            sede_sel = st.sidebar.selectbox("2. Unidad Médica:", ["CONSOLIDADO"] + list(dict_hojas.keys()))
+    mun_sel = st.sidebar.selectbox("Seleccione Municipio para Gráficas:", [a.name for a in archivos])
+    arc_obj = next(a for a in archivos if a.name == mun_sel)
+    dict_h = pd.read_excel(arc_obj, sheet_name=None, header=None)
+    
+    servicios = set()
+    for h in dict_h.values():
+        if not h.empty and h.shape[1] > 0:
+            for s in h.iloc[10:, 0].dropna().unique():
+                if len(str(s)) > 5: servicios.add(str(s).strip())
+    
+    ind_sel = st.selectbox("🎯 Buscar Indicador:", sorted(list(servicios)))
+    sede = st.sidebar.selectbox("Unidad Médica:", ["CONSOLIDADO"] + list(dict_h.keys()))
 
-            nombres_periodos, metas_f, logros_f, pcts_f = [], [0]*16, [0]*16, [0]*16
-            if sede_sel == "CONSOLIDADO":
-                for h in dict_hojas.values():
-                    if not h.empty and h.shape[1] > 0:
-                        fila = h[h.iloc[:, 0].astype(str).str.strip() == indicador]
-                        if not fila.empty:
-                            nombres_periodos, m, l, p = extraer_data_detallada(fila.iloc[0])
-                            metas_f = [x+y for x,y in zip(metas_f, m)]
-                            logros_f = [x+y for x,y in zip(logros_f, l)]
-                pcts_f = [round((l/m*100),1) if m > 0 else 0 for l,m in zip(logros_f, metas_f)]
-            else:
-                hoja = dict_hojas[sede_sel]
-                if not hoja.empty and hoja.shape[1] > 0:
-                    fila = hoja[hoja.iloc[:, 0].astype(str).str.strip() == indicador]
-                    if not fila.empty:
-                        nombres_periodos, metas_f, logros_f, pcts_f = extraer_data_detallada(fila.iloc[0])
+    if sede == "CONSOLIDADO":
+        m_t, l_t = [0]*16, [0]*16
+        n_p = []
+        for h in dict_h.values():
+            f = h[h.iloc[:, 0].astype(str).str.strip() == ind_sel]
+            if not f.empty:
+                n_p, m, l = extraer_data_detallada(f.iloc[0])
+                m_t = [x+y for x,y in zip(m_t, m)]
+                l_t = [x+y for x,y in zip(l_t, l)]
+        nom_p, meta_v, logro_v = n_p, m_t, l_t
+    else:
+        hoja = dict_h[sede]
+        f = hoja[hoja.iloc[:, 0].astype(str).str.strip() == ind_sel]
+        nom_p, meta_v, logro_v = extraer_data_detallada(f.iloc[0]) if not f.empty else ([],[],[])
 
-            if nombres_periodos:
-                df_plot = pd.DataFrame({'Periodo': nombres_periodos, 'Meta': metas_f, 'Logro': logros_f})
-                df_meses = df_plot[~df_plot['Periodo'].str.contains('Avance')]
-                st.plotly_chart(px.bar(df_meses, x='Periodo', y=['Meta', 'Logro'], barmode='group', title=f"Desempeño: {indicador}"), use_container_width=True)
+    if nom_p:
+        df_g = pd.DataFrame({'Periodo': nom_p, 'Meta': meta_v, 'Logro': logro_v})
+        df_g = df_g[~df_g['Periodo'].str.contains('Avance')]
+        st.plotly_chart(px.bar(df_g, x='Periodo', y=['Meta', 'Logro'], barmode='group', title=f"Desempeño: {ind_sel}"), use_container_width=True)
 else:
-    st.info("Sube los archivos para comenzar.")
+    st.info("Sube archivos para iniciar.")
 
 # --- LANZAMIENTO ---
+import os
 os.system("pkill streamlit")
+from pyngrok import ngrok
 tunnnel = ngrok.connect(8501)
 print(f"\n✅ ACCEDE AQUÍ:\n{tunnnel.public_url}\n")
 !streamlit run app.py --server.port 8501 --server.headless True > /dev/null
