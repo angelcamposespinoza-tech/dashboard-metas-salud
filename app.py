@@ -29,9 +29,16 @@ def generar_pdf(df_pendientes, periodos_txt):
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
     pdf.cell(200, 10, txt="REPORTE DE UNIDADES PENDIENTES DE CARGA", ln=True, align='C')
+    
     pdf.set_font("Arial", "I", 12)
     pdf.cell(200, 10, txt=f"Meses auditados: {periodos_txt}", ln=True, align='C')
-    pdf.ln(10)
+    
+    # Añadimos el conteo total al PDF
+    pdf.set_font("Arial", "B", 12)
+    pdf.set_text_color(200, 0, 0) # Rojo para resaltar
+    pdf.cell(200, 10, txt=f"TOTAL DE UNIDADES PENDIENTES: {len(df_pendientes.drop_duplicates(subset=['UNIDAD_MEDICA']))}", ln=True, align='C')
+    pdf.set_text_color(0, 0, 0) # Regresamos a negro
+    pdf.ln(5)
     
     # Tabla
     pdf.set_fill_color(230, 230, 230)
@@ -46,6 +53,7 @@ def generar_pdf(df_pendientes, periodos_txt):
         pdf.cell(80, 10, str(row['UNIDAD_MEDICA']), 1)
         pdf.cell(60, 10, str(row['MES']), 1)
         pdf.ln()
+        
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 if archivos:
@@ -55,7 +63,6 @@ if archivos:
     opciones_meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
     meses_sel = st.sidebar.multiselect("Seleccione meses a auditar:", opciones_meses)
 
-    # Mapeo de columnas de Logro (D=3, G=6, J=9...)
     mes_a_col = {'Ene':3, 'Feb':6, 'Mar':9, 'Abr':12, 'May':15, 'Jun':18, 'Jul':21, 'Ago':24, 'Sep':27, 'Oct':30, 'Nov':33, 'Dic':36}
 
     if st.sidebar.button("🔍 Verificar carga por mes"):
@@ -67,14 +74,10 @@ if archivos:
             for arc in archivos:
                 dict_temp = pd.read_excel(arc, sheet_name=None, header=None)
                 for nombre_hoja, df_hoja in dict_temp.items():
-                    # Solo procesamos hojas que tengan el ancho suficiente
                     if not df_hoja.empty and df_hoja.shape[1] >= 37:
-                        
                         for m_audit in meses_sel:
                             idx = mes_a_col[m_audit]
                             columna_logro = df_hoja.iloc[:, idx]
-                            
-                            # CRITERIO: ¿Hay algún número (incluyendo 0) en esta columna?
                             tiene_datos = pd.to_numeric(columna_logro, errors='coerce').notnull().any()
                             
                             if not tiene_datos:
@@ -87,11 +90,15 @@ if archivos:
             if reporte_omisiones:
                 st.header(f"📋 Reporte de Faltantes")
                 df_final = pd.DataFrame(reporte_omisiones)
+                
+                # Métrica visual en la app
+                total_unidades = len(df_final.drop_duplicates(subset=['UNIDAD_MEDICA']))
+                st.metric(label="Unidades con faltantes detectadas", value=total_unidades)
+                
                 st.table(df_final)
                 
-                # PDF con título de los meses auditados
                 pdf_bytes = generar_pdf(df_final, ", ".join(meses_sel))
-                st.download_button("📥 Descargar Reporte PDF", pdf_bytes, "reporte_mensual.pdf", "application/pdf")
+                st.download_button(f"📥 Descargar Reporte PDF ({total_unidades} unidades)", pdf_bytes, "reporte_mensual.pdf", "application/pdf")
             else:
                 st.success("✅ Carga completa: Todas las unidades tienen datos en los meses seleccionados.")
 
@@ -112,6 +119,7 @@ if archivos:
     
     if sede == "CONSOLIDADO":
         m_t, l_t = [0]*12, [0]*12
+        nom_p = []
         for h in dict_h.values():
             if not h.empty and h.shape[1] > 0:
                 f = h[h.iloc[:, 0].astype(str).str.strip() == ind_sel]
