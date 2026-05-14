@@ -1,25 +1,18 @@
-from pyngrok import ngrok
-import os
-
-# --- CONFIGURACIÓN DE NGROK ---
-# Reemplaza con tu token real de https://dashboard.ngrok.com/get-started/your-authtoken
-token = "TU_TOKEN_AQUÍ" 
-ngrok.set_auth_token(token)
-
-# --- ESCRITURA DEL ARCHIVO APP.PY ---
-%%writefile app.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from io import BytesIO
 from fpdf import FPDF
 
+# Configuración de página
 st.set_page_config(page_title="Monitor de Metas Jurisdiccional", layout="wide")
 st.title("📊 Monitor de Metas Jurisdicción nº1")
 
+# Subida de archivos
 archivos = st.file_uploader("Subir archivos Excel", type=["xlsx"], accept_multiple_files=True)
 
 def extraer_data_detallada(fila):
+    """Extrae Meta y Logro para los 12 meses + avances trimestrales."""
     indices_meta = [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41, 44, 47]
     indices_logro = [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48]
     nombres = ['Ene', 'Feb', 'Mar', 'Avance T1', 'Abr', 'May', 'Jun', 'Avance T2', 
@@ -35,47 +28,47 @@ def extraer_data_detallada(fila):
     return nombres, ms, ls
 
 def generar_pdf(df_unidades, periodo_txt):
+    """Genera un reporte PDF con la lista sencilla de unidades."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    # Título con el periodo
-    pdf.cell(200, 10, txt=f"REPORTE DE UNIDADES PENDIENTES", ln=True, align='C')
+    pdf.cell(200, 10, txt="REPORTE DE UNIDADES PENDIENTES", ln=True, align='C')
     pdf.set_font("Arial", "B", 14)
     pdf.cell(200, 10, txt=f"PERIODO: {periodo_txt.upper()}", ln=True, align='C')
     pdf.ln(10)
     
-    # Encabezados de tabla
+    # Encabezados
     pdf.set_font("Arial", "B", 12)
     pdf.set_fill_color(200, 220, 255)
-    pdf.cell(80, 10, "MUNICIPIO", 1, 0, 'C', True)
-    pdf.cell(110, 10, "UNIDAD MEDICA", 1, 1, 'C', True)
+    pdf.cell(70, 10, "MUNICIPIO", 1, 0, 'C', True)
+    pdf.cell(120, 10, "UNIDAD MEDICA", 1, 1, 'C', True)
     
-    # Filas
+    # Datos
     pdf.set_font("Arial", "", 10)
     for _, row in df_unidades.iterrows():
-        pdf.cell(80, 10, str(row['MUNICIPIO']), 1)
-        pdf.cell(110, 10, str(row['UNIDAD_MEDICA']), 1)
+        pdf.cell(70, 10, str(row['MUNICIPIO']), 1)
+        pdf.cell(120, 10, str(row['UNIDAD_MEDICA']), 1)
         pdf.ln()
     
-    # Codificar a latin-1 para evitar errores de caracteres especiales en FPDF estándar
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 if archivos:
+    # --- AUDITORÍA ---
     st.sidebar.subheader("⚙️ Auditoría de Carga")
     opciones_base = ["Todos los meses", "Trimestre 1", "Trimestre 2", "Trimestre 3", "Trimestre 4",
                      "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
     
-    periodo_sel = st.sidebar.multiselect("Seleccione periodo(s) a auditar:", opciones_base)
+    periodo_sel = st.sidebar.multiselect("Periodos a auditar:", opciones_base)
 
     if st.sidebar.button("🔍 Generar Reporte de Omisiones"):
         if not periodo_sel:
-            st.error("Por favor, seleccione al menos un periodo.")
+            st.error("Por favor, seleccione un periodo.")
         else:
-            st.header(f"📋 Unidades con Información Pendiente")
-            reporte_detallado = []
+            st.header(f"📋 Resumen de Unidades con Información Pendiente")
+            reporte_omisiones = []
             meses_map = {3:'Ene', 6:'Feb', 9:'Mar', 15:'Abr', 18:'May', 21:'Jun', 27:'Jul', 30:'Ago', 33:'Sep', 39:'Oct', 42:'Nov', 45:'Dic'}
             
-            # Resolver periodos seleccionados
+            # Mapeo de periodos
             meses_validar = []
             if "Todos los meses" in periodo_sel:
                 meses_validar = list(meses_map.values())
@@ -89,42 +82,40 @@ if archivos:
                 dict_temp = pd.read_excel(arc, sheet_name=None, header=None)
                 for nombre_hoja, df_hoja in dict_temp.items():
                     if df_hoja.shape[1] >= 46:
-                        # Analizar desde fila 11
+                        # Analizar datos reales
                         datos = df_hoja.iloc[10:].dropna(subset=[0])
                         for _, fila in datos.iterrows():
-                            nombre_ind = str(fila.iloc[0]).strip()
-                            if len(nombre_ind) > 5 and "SERVICIOS" not in nombre_ind.upper():
+                            ind_nom = str(fila.iloc[0]).strip()
+                            if len(ind_nom) > 5 and "SERVICIOS" not in ind_nom.upper():
                                 for col, mes in meses_map.items():
                                     if mes in meses_validar:
-                                        meta = float(fila.iloc[col-1]) if pd.notna(fila.iloc[col-1]) else 0
-                                        logro = float(fila.iloc[col]) if pd.notna(fila.iloc[col]) else 0
-                                        if meta > 0 and (logro == 0 or pd.isna(logro)):
-                                            reporte_detallado.append({
+                                        m = float(fila.iloc[col-1]) if pd.notna(fila.iloc[col-1]) else 0
+                                        l = float(fila.iloc[col]) if pd.notna(fila.iloc[col]) else 0
+                                        if m > 0 and (l == 0 or pd.isna(l)):
+                                            reporte_omisiones.append({
                                                 "MUNICIPIO": arc.name.replace(".xlsx","").upper(),
                                                 "UNIDAD_MEDICA": nombre_hoja.upper()
                                             })
 
-            if reporte_detallado:
-                df_det = pd.DataFrame(reporte_detallado).drop_duplicates().sort_values(by=["MUNICIPIO", "UNIDAD_MEDICA"])
-                st.warning(f"Se encontraron {len(df_det)} unidades con carga pendiente.")
+            if reporte_omisiones:
+                df_det = pd.DataFrame(reporte_omisiones).drop_duplicates().sort_values(by=["MUNICIPIO", "UNIDAD_MEDICA"])
+                st.warning(f"Se detectaron {len(df_det)} unidades con carga pendiente.")
                 st.table(df_det)
                 
-                # --- BOTONES DE DESCARGA ---
-                col1, col2 = st.columns(2)
-                
+                c1, c2 = st.columns(2)
                 # Excel
-                output_ex = BytesIO()
-                df_det.to_excel(output_ex, index=False, engine='xlsxwriter')
-                col1.download_button("📥 Descargar Reporte (Excel)", output_ex.getvalue(), "pendientes.xlsx")
+                out_ex = BytesIO()
+                df_det.to_excel(out_ex, index=False, engine='xlsxwriter')
+                c1.download_button("📥 Descargar Excel", out_ex.getvalue(), "pendientes.xlsx")
                 
                 # PDF
-                periodo_str = ", ".join(periodo_sel)
-                pdf_bytes = generar_pdf(df_det, periodo_str)
-                col2.download_button("📥 Descargar Reporte (PDF)", pdf_bytes, "pendientes.pdf", "application/pdf")
+                txt_p = ", ".join(periodo_sel)
+                pdf_b = generar_pdf(df_det, txt_p)
+                c2.download_button("📥 Descargar PDF", pdf_b, "pendientes.pdf", "application/pdf")
             else:
                 st.success("✅ Carga completa detectada para los periodos seleccionados.")
 
-    # --- VISUALIZADOR DE GRÁFICAS ---
+    # --- GRÁFICAS ---
     st.sidebar.divider()
     mun_sel = st.sidebar.selectbox("Seleccione Municipio para Gráficas:", [a.name for a in archivos])
     arc_obj = next(a for a in archivos if a.name == mun_sel)
@@ -140,8 +131,7 @@ if archivos:
     sede = st.sidebar.selectbox("Unidad Médica:", ["CONSOLIDADO"] + list(dict_h.keys()))
 
     if sede == "CONSOLIDADO":
-        m_t, l_t = [0]*16, [0]*16
-        n_p = []
+        m_t, l_t, n_p = [0]*16, [0]*16, []
         for h in dict_h.values():
             f = h[h.iloc[:, 0].astype(str).str.strip() == ind_sel]
             if not f.empty:
@@ -160,11 +150,3 @@ if archivos:
         st.plotly_chart(px.bar(df_g, x='Periodo', y=['Meta', 'Logro'], barmode='group', title=f"Desempeño: {ind_sel}"), use_container_width=True)
 else:
     st.info("Sube archivos para iniciar.")
-
-# --- LANZAMIENTO ---
-import os
-os.system("pkill streamlit")
-from pyngrok import ngrok
-tunnnel = ngrok.connect(8501)
-print(f"\n✅ ACCEDE AQUÍ:\n{tunnnel.public_url}\n")
-!streamlit run app.py --server.port 8501 --server.headless True > /dev/null
