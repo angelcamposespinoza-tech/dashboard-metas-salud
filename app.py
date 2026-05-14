@@ -33,11 +33,14 @@ def generar_pdf(df_pendientes, periodos_txt):
     pdf.set_font("Arial", "I", 12)
     pdf.cell(200, 10, txt=f"Meses auditados: {periodos_txt}", ln=True, align='C')
     
-    # Añadimos el conteo total al PDF
+    # CONTEO ÚNICO EN EL PDF
+    # Contamos combinaciones únicas de Municipio + Unidad para no duplicar sedes
+    total_unidades_fisicas = len(df_pendientes.drop_duplicates(subset=['MUNICIPIO', 'UNIDAD_MEDICA']))
+    
     pdf.set_font("Arial", "B", 12)
-    pdf.set_text_color(200, 0, 0) # Rojo para resaltar
-    pdf.cell(200, 10, txt=f"TOTAL DE UNIDADES PENDIENTES: {len(df_pendientes.drop_duplicates(subset=['UNIDAD_MEDICA']))}", ln=True, align='C')
-    pdf.set_text_color(0, 0, 0) # Regresamos a negro
+    pdf.set_text_color(200, 0, 0)
+    pdf.cell(200, 10, txt=f"TOTAL DE UNIDADES FISICAS PENDIENTES: {total_unidades_fisicas}", ln=True, align='C')
+    pdf.set_text_color(0, 0, 0)
     pdf.ln(5)
     
     # Tabla
@@ -78,6 +81,8 @@ if archivos:
                         for m_audit in meses_sel:
                             idx = mes_a_col[m_audit]
                             columna_logro = df_hoja.iloc[:, idx]
+                            
+                            # Criterio: ¿Hay algún número (incluyendo 0) en esta columna?
                             tiene_datos = pd.to_numeric(columna_logro, errors='coerce').notnull().any()
                             
                             if not tiene_datos:
@@ -91,18 +96,20 @@ if archivos:
                 st.header(f"📋 Reporte de Faltantes")
                 df_final = pd.DataFrame(reporte_omisiones)
                 
-                # Métrica visual en la app
-                total_unidades = len(df_final.drop_duplicates(subset=['UNIDAD_MEDICA']))
-                st.metric(label="Unidades con faltantes detectadas", value=total_unidades)
+                # Métrica de unidades únicas (Municipio + Unidad)
+                unidades_unicas = df_final.drop_duplicates(subset=['MUNICIPIO', 'UNIDAD_MEDICA'])
+                conteo_real = len(unidades_unicas)
+                
+                st.metric(label="Total de unidades físicas con faltantes", value=conteo_real)
                 
                 st.table(df_final)
                 
                 pdf_bytes = generar_pdf(df_final, ", ".join(meses_sel))
-                st.download_button(f"📥 Descargar Reporte PDF ({total_unidades} unidades)", pdf_bytes, "reporte_mensual.pdf", "application/pdf")
+                st.download_button(f"📥 Descargar Reporte PDF ({conteo_real} unidades)", pdf_bytes, "reporte_mensual.pdf", "application/pdf")
             else:
-                st.success("✅ Carga completa: Todas las unidades tienen datos en los meses seleccionados.")
+                st.success("✅ Carga completa detectada.")
 
-    # --- VISUALIZADOR ---
+    # --- VISUALIZADOR DE GRÁFICAS ---
     st.sidebar.divider()
     mun_sel = st.sidebar.selectbox("Ver Gráficas de:", [a.name for a in archivos])
     arc_obj = next(a for a in archivos if a.name == mun_sel)
@@ -118,8 +125,7 @@ if archivos:
     sede = st.sidebar.selectbox("Unidad Médica:", ["CONSOLIDADO"] + list(dict_h.keys()))
     
     if sede == "CONSOLIDADO":
-        m_t, l_t = [0]*12, [0]*12
-        nom_p = []
+        m_t, l_t, nom_p = [0]*12, [0]*12, []
         for h in dict_h.values():
             if not h.empty and h.shape[1] > 0:
                 f = h[h.iloc[:, 0].astype(str).str.strip() == ind_sel]
