@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from io import BytesIO
 
 st.set_page_config(page_title="Monitor de Metas Jurisdiccional", layout="wide")
 st.title("📊 Monitor de Metas Jurisdicción nº1")
@@ -27,11 +28,10 @@ def extraer_data_detallada(fila):
     return nombres, ms, ls, ps
 
 if archivos:
-    # --- AUDITORÍA CON MULTISELECCIÓN INTELIGENTE ---
+    # --- CONFIGURACIÓN DE FILTROS ---
     st.sidebar.divider()
-    st.sidebar.subheader("⚙️ Configuración de Auditoría")
+    st.sidebar.subheader("⚙️ Auditoría de Carga")
     
-    # Lógica de exclusión de filtros
     trimestres = {
         "Trimestre 1 (Ene-Mar)": ["Ene", "Feb", "Mar"],
         "Trimestre 2 (Abr-Jun)": ["Abr", "May", "Jun"],
@@ -39,56 +39,43 @@ if archivos:
         "Trimestre 4 (Oct-Dic)": ["Oct", "Nov", "Dic"]
     }
     
-    # Definir opciones disponibles dinámicamente
     opciones_base = ["Todos los meses", "Trimestre 1 (Ene-Mar)", "Trimestre 2 (Abr-Jun)", 
                      "Trimestre 3 (Jul-Sep)", "Trimestre 4 (Oct-Dic)", "Ene", "Feb", 
                      "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
     
-    # Control de estado de selección
     if "periodo_sel" not in st.session_state:
         st.session_state.periodo_sel = []
 
-    # Filtrar opciones para evitar redundancia
     opciones_mostrar = opciones_base.copy()
     if "Todos los meses" in st.session_state.periodo_sel:
         opciones_mostrar = ["Todos los meses"]
     else:
         for trim, meses in trimestres.items():
             if trim in st.session_state.periodo_sel:
-                # Si el trimestre está seleccionado, quitar sus meses individuales
                 for m in meses:
                     if m in opciones_mostrar: opciones_mostrar.remove(m)
-            else:
-                # Si algún mes de ese trimestre está seleccionado, quitar la opción del trimestre
-                if any(m in st.session_state.periodo_sel for m in meses):
-                    if trim in opciones_mostrar: opciones_mostrar.remove(trim)
+            elif any(m in st.session_state.periodo_sel for m in meses):
+                if trim in opciones_mostrar: opciones_mostrar.remove(trim)
                     
-    periodo_sel = st.sidebar.multiselect(
-        "Seleccione periodos a auditar:", 
-        opciones_mostrar, 
-        key="periodo_sel",
-        help="Si elige un trimestre, no podrá elegir sus meses por separado."
-    )
+    periodo_sel = st.sidebar.multiselect("Periodos a auditar:", opciones_mostrar, key="periodo_sel")
 
-    if st.sidebar.button("🔍 Mostrar rubros de logro no registrados"):
+    if st.sidebar.button("🔍 Generar Reporte de Omisiones"):
         if not periodo_sel:
-            st.error("Por favor seleccione al menos un periodo.")
+            st.error("Seleccione un periodo.")
         else:
-            st.header(f"⚠️ Reporte de Omisiones")
-            reporte_omisiones = []
+            st.header(f"📋 Resumen de Unidades con Información Pendiente")
+            
+            reporte_detallado = []
             meses_columnas = {3: 'Ene', 6: 'Feb', 9: 'Mar', 15: 'Abr', 18: 'May', 21: 'Jun', 
                               27: 'Jul', 30: 'Ago', 33: 'Sep', 39: 'Oct', 42: 'Nov', 45: 'Dic'}
 
-            # Mapear selección a lista de meses reales
             meses_validar = []
             if "Todos los meses" in periodo_sel:
                 meses_validar = list(meses_columnas.values())
             else:
                 for p in periodo_sel:
-                    if p in trimestres:
-                        meses_validar.extend(trimestres[p])
-                    else:
-                        meses_validar.append(p)
+                    if p in trimestres: meses_validar.extend(trimestres[p])
+                    else: meses_validar.append(p)
             
             for arc in archivos:
                 dict_temp = pd.read_excel(arc, sheet_name=None, header=None)
@@ -105,71 +92,74 @@ if archivos:
                                             m_v = float(fila.iloc[col_meta]) if pd.notna(fila.iloc[col_meta]) else 0
                                             l_v = float(fila.iloc[col_logro]) if pd.notna(fila.iloc[col_logro]) else 0
                                             if m_v > 0 and (l_v == 0 or pd.isna(l_v)):
-                                                reporte_omisiones.append({
-                                                    "Municipio": arc.name.replace(".xlsx", ""),
-                                                    "Unidad/Pestaña": nombre_hoja,
-                                                    "Indicador": indicador_nombre,
-                                                    "Mes Pendiente": mes_nom
+                                                reporte_detallado.append({
+                                                    "MUNICIPIO": arc.name.replace(".xlsx", "").upper(),
+                                                    "UNIDAD_MEDICA": nombre_hoja.upper(),
+                                                    "MES_FALTANTE": mes_nom.upper()
                                                 })
                                         except: continue
 
-            if reporte_omisiones:
-                df_om = pd.DataFrame(reporte_omisiones)
-                st.warning(f"Se encontraron {len(df_om)} registros pendientes.")
-                st.dataframe(df_om, use_container_width=True)
-                csv = df_om.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Descargar Reporte (CSV)", csv, "omisiones_multiples.csv", "text/csv")
-            else:
-                st.success("✅ No se encontraron omisiones en los periodos seleccionados.")
+            if reporte_detallado:
+                df_detallado = pd.DataFrame(reporte_detallado)
+                
+                # --- LISTA SIMPLE DE UNIDADES (SIN REPETIR) ---
+                unidades_pendientes = df_detallado.drop_duplicates(subset=["MUNICIPIO", "UNIDAD_MEDICA"])
+                unidades_pendientes = unidades_pendientes[["MUNICIPIO", "UNIDAD_MEDICA"]].reset_index(drop=True)
+                
+                st.warning(f"Se detectaron {len(unidades_pendientes)} unidades que no han completado su carga.")
+                st.table(unidades_pendientes)
 
-    # --- VISUALIZADOR INDIVIDUAL ---
+                # --- EXPORTAR A EXCEL ---
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    unidades_pendientes.to_excel(writer, index=False, sheet_name='Unidades_Pendientes')
+                    df_detallado.to_excel(writer, index=False, sheet_name='Detalle_por_Indicador')
+                
+                st.download_button(
+                    label="📥 Descargar Reporte de Unidades Pendientes (Excel)",
+                    data=output.getvalue(),
+                    file_name=f"reporte_unidades_pendientes_{periodo_sel[0]}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.success("✅ ¡Excelente! Todas las unidades han subido su información.")
+
+    # --- VISUALIZADOR INDIVIDUAL (GRAFICAS) ---
     st.sidebar.divider()
-    nombres_archivos = [arc.name for arc in archivos]
-    dep_sel = st.sidebar.selectbox("1. Seleccione Municipio:", nombres_archivos)
+    dep_sel = st.sidebar.selectbox("1. Municipio para Gráficas:", [arc.name for arc in archivos])
     archivo_obj = next(arc for arc in archivos if arc.name == dep_sel)
     dict_hojas = pd.read_excel(archivo_obj, sheet_name=None, header=None)
     
-    servicios_limpios = set()
+    # Limpieza de indicadores para el buscador
+    servicios = set()
     for h in dict_hojas.values():
         if h.shape[1] > 0:
-            df_temp = h.iloc[10:, 0].dropna()
-            for s in df_temp.unique():
-                n_s = str(s).strip()
-                if n_s.upper() not in ['N/A', 'SERVICIOS DE SALUD', 'TRATO DIGNO', 'NAN']:
-                    if len(n_s) > 5: servicios_limpios.add(n_s)
+            for s in h.iloc[10:, 0].dropna().unique():
+                if len(str(s)) > 5 and str(s).upper() not in ['N/A', 'SERVICIOS DE SALUD', 'NAN']:
+                    servicios.add(str(s).strip())
     
-    lista_ord = sorted(list(servicios_limpios))
-    op_hojas = ["CONSOLIDADO MUNICIPAL"] + list(dict_hojas.keys())
-    sede_sel = st.sidebar.selectbox("2. Seleccione Unidad Médica:", op_hojas)
-    indicador = st.selectbox("3. Seleccione el Indicador:", lista_ord)
+    indicador = st.selectbox("🎯 Buscar Indicador para Gráficas:", sorted(list(servicios)))
+    sede_sel = st.sidebar.selectbox("2. Unidad Médica:", ["CONSOLIDADO"] + list(dict_hojas.keys()))
 
-    if sede_sel == "CONSOLIDADO MUNICIPAL":
+    # Lógica de graficación (mantenida de versiones anteriores)
+    if sede_sel == "CONSOLIDADO":
         metas_f, logros_f = [0]*16, [0]*16
         nombres_periodos = []
         for h in dict_hojas.values():
-            if h.shape[1] > 0:
-                fila = h[h.iloc[:, 0].astype(str).str.strip() == indicador]
-                if not fila.empty:
-                    nombres_periodos, m, l, p = extraer_data_detallada(fila.iloc[0])
-                    metas_f = [x + y for x, y in zip(metas_f, m)]
-                    logros_f = [x + y for x, y in zip(logros_f, l)]
-        pcts_f = [round((l/m*100),1) if m > 0 else 0 for l, m in zip(logros_f, metas_f)]
+            fila = h[h.iloc[:, 0].astype(str).str.strip() == indicador]
+            if not fila.empty:
+                nombres_periodos, m, l, p = extraer_data_detallada(fila.iloc[0])
+                metas_f = [x+y for x,y in zip(metas_f, m)]
+                logros_f = [x+y for x,y in zip(logros_f, l)]
+        pcts_f = [round((l/m*100),1) if m > 0 else 0 for l,m in zip(logros_f, metas_f)]
     else:
         hoja = dict_hojas[sede_sel]
         fila = hoja[hoja.iloc[:, 0].astype(str).str.strip() == indicador]
-        if not fila.empty:
-            nombres_periodos, metas_f, logros_f, pcts_f = extraer_data_detallada(fila.iloc[0])
-        else: nombres_periodos = []
+        nombres_periodos, metas_f, logros_f, pcts_f = extraer_data_detallada(fila.iloc[0]) if not fila.empty else ([],[],[],[])
 
     if nombres_periodos:
-        df_total = pd.DataFrame({'Periodo': nombres_periodos, 'Meta': metas_f, 'Logro': logros_f, 'Pct': pcts_f})
-        df_meses = df_total[~df_total['Periodo'].str.contains('Avance')]
-        st.divider()
-        st.header(f"📍 {indicador}")
-        fig = px.bar(df_meses, x='Periodo', y=['Meta', 'Logro'], barmode='group',
-                     title=f"Cumplimiento: {indicador}", color_discrete_map={'Meta': '#1f77b4', 'Logro': '#d62728'})
-        st.plotly_chart(fig, use_container_width=True)
-        with st.expander("🔍 Ver Tabla Detallada"):
-            st.table(df_total.set_index('Periodo'))
+        df_plot = pd.DataFrame({'Periodo': nombres_periodos, 'Meta': metas_f, 'Logro': logros_f})
+        df_plot = df_plot[~df_plot['Periodo'].str.contains('Avance')]
+        st.plotly_chart(px.bar(df_plot, x='Periodo', y=['Meta', 'Logro'], barmode='group', title=f"Desempeño: {indicador}"), use_container_width=True)
 else:
-    st.info("Sube los archivos Excel para activar la auditoría.")
+    st.info("Sube los archivos Excel para activar el monitor.")
