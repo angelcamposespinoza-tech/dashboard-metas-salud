@@ -125,41 +125,61 @@ if archivos:
                 st.success("✅ ¡Excelente! Todas las unidades han subido su información.")
 
     # --- VISUALIZADOR INDIVIDUAL (GRAFICAS) ---
-    st.sidebar.divider()
-    dep_sel = st.sidebar.selectbox("1. Municipio para Gráficas:", [arc.name for arc in archivos])
-    archivo_obj = next(arc for arc in archivos if arc.name == dep_sel)
-    dict_hojas = pd.read_excel(archivo_obj, sheet_name=None, header=None)
-    
-    # Limpieza de indicadores para el buscador
-    servicios = set()
-    for h in dict_hojas.values():
-        if h.shape[1] > 0:
-            for s in h.iloc[10:, 0].dropna().unique():
-                if len(str(s)) > 5 and str(s).upper() not in ['N/A', 'SERVICIOS DE SALUD', 'NAN']:
-                    servicios.add(str(s).strip())
-    
+st.sidebar.divider()
+nombres_arch_list = [arc.name for arc in archivos]
+dep_sel = st.sidebar.selectbox("1. Municipio para Gráficas:", nombres_arch_list)
+archivo_obj = next(arc for arc in archivos if arc.name == dep_sel)
+
+# Leer el Excel
+dict_hojas = pd.read_excel(archivo_obj, sheet_name=None, header=None)
+
+# Limpieza de indicadores para el buscador (Solo de hojas con datos)
+servicios = set()
+for h in dict_hojas.values():
+    if not h.empty and h.shape[1] > 0: # <-- VALIDACIÓN CLAVE
+        for s in h.iloc[10:, 0].dropna().unique():
+            if len(str(s)) > 5 and str(s).upper() not in ['N/A', 'SERVICIOS DE SALUD', 'NAN']:
+                servicios.add(str(s).strip())
+
+if servicios:
     indicador = st.selectbox("🎯 Buscar Indicador para Gráficas:", sorted(list(servicios)))
     sede_sel = st.sidebar.selectbox("2. Unidad Médica:", ["CONSOLIDADO"] + list(dict_hojas.keys()))
 
-    # Lógica de graficación (mantenida de versiones anteriores)
+    # Lógica de graficación
+    nombres_periodos, metas_f, logros_f, pcts_f = [], [0]*16, [0]*16, [0]*16
+
     if sede_sel == "CONSOLIDADO":
-        metas_f, logros_f = [0]*16, [0]*16
-        nombres_periodos = []
         for h in dict_hojas.values():
-            fila = h[h.iloc[:, 0].astype(str).str.strip() == indicador]
-            if not fila.empty:
-                nombres_periodos, m, l, p = extraer_data_detallada(fila.iloc[0])
-                metas_f = [x+y for x,y in zip(metas_f, m)]
-                logros_f = [x+y for x,y in zip(logros_f, l)]
+            if not h.empty and h.shape[1] > 0: # <-- OTRA VALIDACIÓN
+                fila = h[h.iloc[:, 0].astype(str).str.strip() == indicador]
+                if not fila.empty:
+                    nombres_periodos, m, l, p = extraer_data_detallada(fila.iloc[0])
+                    metas_f = [x+y for x,y in zip(metas_f, m)]
+                    logros_f = [x+y for x,y in zip(logros_f, l)]
         pcts_f = [round((l/m*100),1) if m > 0 else 0 for l,m in zip(logros_f, metas_f)]
     else:
         hoja = dict_hojas[sede_sel]
-        fila = hoja[hoja.iloc[:, 0].astype(str).str.strip() == indicador]
-        nombres_periodos, metas_f, logros_f, pcts_f = extraer_data_detallada(fila.iloc[0]) if not fila.empty else ([],[],[],[])
+        if not hoja.empty and hoja.shape[1] > 0:
+            fila = hoja[hoja.iloc[:, 0].astype(str).str.strip() == indicador]
+            if not fila.empty:
+                nombres_periodos, metas_f, logros_f, pcts_f = extraer_data_detallada(fila.iloc[0])
 
     if nombres_periodos:
-        df_plot = pd.DataFrame({'Periodo': nombres_periodos, 'Meta': metas_f, 'Logro': logros_f})
-        df_plot = df_plot[~df_plot['Periodo'].str.contains('Avance')]
-        st.plotly_chart(px.bar(df_plot, x='Periodo', y=['Meta', 'Logro'], barmode='group', title=f"Desempeño: {indicador}"), use_container_width=True)
+        df_plot = pd.DataFrame({'Periodo': nombres_periodos, 'Meta': metas_f, 'Logro': logros_f, 'Pct': pcts_f})
+        df_meses = df_plot[~df_plot['Periodo'].str.contains('Avance')]
+        
+        st.divider()
+        st.header(f"📍 {indicador}")
+        
+        fig = px.bar(df_meses, x='Periodo', y=['Meta', 'Logro'], barmode='group',
+                     title=f"Cumplimiento: {indicador}", 
+                     color_discrete_map={'Meta': '#1f77b4', 'Logro': '#d62728'},
+                     text_auto=True)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        with st.expander("🔍 Ver Tabla Detallada"):
+            st.table(df_plot.set_index('Periodo'))
+    else:
+        st.warning("No se encontraron datos para este indicador.")
 else:
-    st.info("Sube los archivos Excel para activar el monitor.")
+    st.error("El archivo seleccionado no contiene indicadores válidos en el formato esperado.")
